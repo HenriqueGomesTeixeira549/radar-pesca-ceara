@@ -1,375 +1,737 @@
-from datetime import datetime
-import time
+from datetime import date
+
 import folium
 import pandas as pd
 import requests
 import streamlit as st
 from streamlit_folium import st_folium
 
-# Configuração inicial da página (Layout Largo estilo SaaS)
+
+# =========================================================
+# 1. CONFIGURAÇÃO DA PÁGINA
+# =========================================================
+
 st.set_page_config(
-    page_title="Radar de Pesca Ceará - SaaS Pro", page_icon="🎣", layout="wide"
+    page_title="Radar de Pesca Ceará - SaaS Pro",
+    page_icon="🎣",
+    layout="wide",
 )
 
-# ==========================================
-# 1. ESTILIZAÇÃO CSS CUSTOMIZADA (SaaS Theme)
-# ==========================================
+
+# =========================================================
+# 2. ESTILO VISUAL
+# =========================================================
+
 st.markdown(
     """
     <style>
     .stApp {
-        background-image: linear-gradient(rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.8)),
-                          url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80");
-        background-size: cover;
-        background-position: center;
-        background-attachment: fixed;
+        background: linear-gradient(135deg, #07111f 0%, #10283a 100%);
+        color: #f2f7fc;
     }
-    h1, h2, h3, h4, h5, h6, p, label {
-        color: #FFFFFF !important;
+
+    h1, h2, h3, p, label {
+        color: #f2f7fc !important;
     }
+
     div[data-testid="stMetric"] {
-        background-color: rgba(15, 23, 42, 0.8);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        padding: 15px;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        background: rgba(255,255,255,0.07);
+        border: 1px solid rgba(255,255,255,0.12);
+        padding: 18px;
+        border-radius: 14px;
     }
-    .saas-card {
-        background-color: rgba(15, 23, 42, 0.75);
-        border-left: 4px solid #00E5FF;
-        padding: 20px;
-        border-radius: 8px;
-        margin-top: 15px;
-        margin-bottom: 20px;
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-right: 1px solid rgba(255, 255, 255, 0.1);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+
+    div[data-testid="stDataFrame"] {
+        background: rgba(255,255,255,0.04);
+        border-radius: 12px;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: #091827;
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("🎣 Radar de Pesca - Ceará SaaS Intelligence")
-st.markdown(
-    "Plataforma avançada de decisão oceanográfica para pesca de praia"
-    " (*Surfcasting*)."
-)
 
-# ==========================================
-# 2. BASE DE DADOS GEOGRÁFICA
-# lat/lon: coordenadas usadas para consultas meteorológicas/marinhas.
-# map_lat/map_lon serão obtidas por geocodificação para posicionar o ponto
-# em terra, usando o nome do local. A geocodificação precisa ser conferida.
-# ==========================================
-MUNICIPIOS_CEARA = [
-    {"nome": "Icapuí", "lat": -4.2650, "lon": -37.8420, "tem_estrutura_pedra": True, "proximo_foz_rio": False, "fator_base": 9.0},
-    {"nome": "Aracati (Canoa Quebrada)", "lat": -4.4330, "lon": -37.7690, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 8.5},
-    {"nome": "Fortim", "lat": -4.4120, "lon": -37.7950, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 8.5},
-    {"nome": "Beberibe (Morro Branco)", "lat": -4.1350, "lon": -38.1180, "tem_estrutura_pedra": True, "proximo_foz_rio": False, "fator_base": 8.5},
-    {"nome": "Cascavel (Iguape)", "lat": -3.9780, "lon": -38.2750, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 8.0},
-    {"nome": "Aquiraz (Prainha)", "lat": -3.8750, "lon": -38.3450, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 8.0},
-    {"nome": "Fortaleza (Praia do Futuro)", "lat": -3.7310, "lon": -38.4410, "tem_estrutura_pedra": False, "proximo_foz_rio": False, "fator_base": 7.0},
-    {"nome": "Caucaia (Cumbuco)", "lat": -3.6150, "lon": -38.7280, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 8.0},
-    {"nome": "São Gonçalo do Amarante (Pecém)", "lat": -3.5410, "lon": -38.8050, "tem_estrutura_pedra": True, "proximo_foz_rio": False, "fator_base": 7.5},
-    {"nome": "Paracuru", "lat": -3.4090, "lon": -39.2300, "tem_estrutura_pedra": True, "proximo_foz_rio": False, "fator_base": 8.5},
-    {"nome": "Paraipaba (Lagoinha)", "lat": -3.1850, "lon": -39.0550, "tem_estrutura_pedra": False, "proximo_foz_rio": False, "fator_base": 7.5},
-    {"nome": "Trairi (Flecheiras)", "lat": -3.2210, "lon": -39.2750, "tem_estrutura_pedra": True, "proximo_foz_rio": False, "fator_base": 8.0},
-    {"nome": "Amontada (Icaraizinho)", "lat": -2.7120, "lon": -39.7900, "tem_estrutura_pedra": True, "proximo_foz_rio": False, "fator_base": 8.0},
-    {"nome": "Itarema (Almofala)", "lat": -2.9150, "lon": -39.9100, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 8.0},
-    {"nome": "Acaraú", "lat": -2.8750, "lon": -40.1150, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 8.0},
-    {"nome": "Jijoca de Jericoacoara", "lat": -2.7950, "lon": -40.5050, "tem_estrutura_pedra": True, "proximo_foz_rio": False, "fator_base": 8.5},
-    {"nome": "Camocim", "lat": -2.9180, "lon": -40.8350, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 8.5},
-    {"nome": "Barroquinha", "lat": -2.9980, "lon": -41.1100, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 8.0},
-    {"nome": "Chaval", "lat": -3.0250, "lon": -40.9700, "tem_estrutura_pedra": False, "proximo_foz_rio": True, "fator_base": 7.5},
-    {"nome": "Cruz (Preá)", "lat": -2.8180, "lon": -40.4150, "tem_estrutura_pedra": False, "proximo_foz_rio": False, "fator_base": 7.5},
+# =========================================================
+# 3. PONTOS COSTEIROS DO CEARÁ
+#
+# lat_mapa/lon_mapa: posição aproximada do marcador no mar.
+# lat_api/lon_api: posição de referência para consultar
+# as condições meteorológicas.
+#
+# IMPORTANTE:
+# As coordenadas são aproximadas, não pontos náuticos
+# oficialmente verificados.
+# =========================================================
+
+LOCAIS_PESCA = [
+    {
+        "nome": "Praia Redonda - Icapuí",
+        "lat_mapa": -4.652,
+        "lon_mapa": -37.448,
+        "lat_api": -4.655,
+        "lon_api": -37.450,
+        "estrutura": "Falésias e recifes",
+        "desembocadura": False,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Ponta Grossa - Icapuí",
+        "lat_mapa": -4.681,
+        "lon_mapa": -37.355,
+        "lat_api": -4.685,
+        "lon_api": -37.357,
+        "estrutura": "Falésias e pedras",
+        "desembocadura": False,
+        "fator_base": 9,
+    },
+    {
+        "nome": "Canoa Quebrada - Aracati",
+        "lat_mapa": -4.518,
+        "lon_mapa": -37.704,
+        "lat_api": -4.525,
+        "lon_api": -37.704,
+        "estrutura": "Falésias e recifes",
+        "desembocadura": False,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Majorlândia - Aracati",
+        "lat_mapa": -4.525,
+        "lon_mapa": -37.642,
+        "lat_api": -4.532,
+        "lon_api": -37.642,
+        "estrutura": "Pedras e recifes",
+        "desembocadura": False,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Morro Branco - Beberibe",
+        "lat_mapa": -4.143,
+        "lon_mapa": -38.091,
+        "lat_api": -4.150,
+        "lon_api": -38.091,
+        "estrutura": "Falésias e recifes",
+        "desembocadura": False,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Praia das Fontes - Beberibe",
+        "lat_mapa": -4.168,
+        "lon_mapa": -38.087,
+        "lat_api": -4.175,
+        "lon_api": -38.087,
+        "estrutura": "Falésias e pedras",
+        "desembocadura": False,
+        "fator_base": 7,
+    },
+    {
+        "nome": "Iguape - Aquiraz",
+        "lat_mapa": -3.930,
+        "lon_mapa": -38.225,
+        "lat_api": -3.937,
+        "lon_api": -38.225,
+        "estrutura": "Recifes e pedras",
+        "desembocadura": False,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Prainha - Aquiraz",
+        "lat_mapa": -3.895,
+        "lon_mapa": -38.368,
+        "lat_api": -3.902,
+        "lon_api": -38.368,
+        "estrutura": "Faixa de areia e recifes",
+        "desembocadura": False,
+        "fator_base": 7,
+    },
+    {
+        "nome": "Porto das Dunas - Aquiraz",
+        "lat_mapa": -3.850,
+        "lon_mapa": -38.390,
+        "lat_api": -3.857,
+        "lon_api": -38.390,
+        "estrutura": "Praia arenosa",
+        "desembocadura": False,
+        "fator_base": 6,
+    },
+    {
+        "nome": "Praia do Futuro - Fortaleza",
+        "lat_mapa": -3.715,
+        "lon_mapa": -38.448,
+        "lat_api": -3.722,
+        "lon_api": -38.448,
+        "estrutura": "Praia arenosa e recifes",
+        "desembocadura": False,
+        "fator_base": 7,
+    },
+    {
+        "nome": "Sabiaguaba - Fortaleza",
+        "lat_mapa": -3.770,
+        "lon_mapa": -38.438,
+        "lat_api": -3.777,
+        "lon_api": -38.438,
+        "estrutura": "Dunas e desembocadura",
+        "desembocadura": True,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Cumbuco - Caucaia",
+        "lat_mapa": -3.615,
+        "lon_mapa": -38.725,
+        "lat_api": -3.622,
+        "lon_api": -38.725,
+        "estrutura": "Praia arenosa",
+        "desembocadura": False,
+        "fator_base": 7,
+    },
+    {
+        "nome": "Pecém - São Gonçalo do Amarante",
+        "lat_mapa": -3.535,
+        "lon_mapa": -38.825,
+        "lat_api": -3.542,
+        "lon_api": -38.825,
+        "estrutura": "Pedras e estruturas costeiras",
+        "desembocadura": False,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Paracuru",
+        "lat_mapa": -3.395,
+        "lon_mapa": -39.010,
+        "lat_api": -3.402,
+        "lon_api": -39.010,
+        "estrutura": "Recifes e pedras",
+        "desembocadura": False,
+        "fator_base": 9,
+    },
+    {
+        "nome": "Lagoinha - Paraipaba",
+        "lat_mapa": -3.365,
+        "lon_mapa": -39.140,
+        "lat_api": -3.372,
+        "lon_api": -39.140,
+        "estrutura": "Falésias e recifes",
+        "desembocadura": False,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Flecheiras - Trairi",
+        "lat_mapa": -3.225,
+        "lon_mapa": -39.270,
+        "lat_api": -3.232,
+        "lon_api": -39.270,
+        "estrutura": "Recifes e pedras",
+        "desembocadura": False,
+        "fator_base": 9,
+    },
+    {
+        "nome": "Mundaú - Trairi",
+        "lat_mapa": -3.175,
+        "lon_mapa": -39.355,
+        "lat_api": -3.182,
+        "lon_api": -39.355,
+        "estrutura": "Estuário e recifes",
+        "desembocadura": True,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Icaraizinho - Amontada",
+        "lat_mapa": -3.015,
+        "lon_mapa": -39.655,
+        "lat_api": -3.022,
+        "lon_api": -39.655,
+        "estrutura": "Recifes e pedras",
+        "desembocadura": False,
+        "fator_base": 9,
+    },
+    {
+        "nome": "Jericoacoara - Jijoca",
+        "lat_mapa": -2.785,
+        "lon_mapa": -40.510,
+        "lat_api": -2.792,
+        "lon_api": -40.510,
+        "estrutura": "Recifes e costões",
+        "desembocadura": False,
+        "fator_base": 8,
+    },
+    {
+        "nome": "Praia de Camocim",
+        "lat_mapa": -2.895,
+        "lon_mapa": -40.840,
+        "lat_api": -2.902,
+        "lon_api": -40.840,
+        "estrutura": "Praia e estuário",
+        "desembocadura": True,
+        "fator_base": 8,
+    },
 ]
 
-# ==========================================
-# 2.1. GEOCODIFICAÇÃO DAS POSIÇÕES DO MAPA
-# Busca as localidades no Nominatim/OSM e mantém as coordenadas originais
-# como fallback se o serviço não responder. Os resultados devem ser validados
-# antes de serem tratados como pontos exatos de praia/pesca.
-# ==========================================
-@st.cache_data(ttl=30 * 24 * 60 * 60, show_spinner=False)
-def geocodificar_local(nome):
-    consulta = f"{nome}, Ceará, Brasil"
-    url = "https://nominatim.openstreetmap.org/search"
-    headers = {"User-Agent": "RadarPescaCearaSaaS/1.0 (aplicativo de pesquisa costeira)"}
-    try:
-        resposta = requests.get(
-            url,
-            params={"q": consulta, "format": "jsonv2", "limit": 1, "countrycodes": "br"},
-            headers=headers,
-            timeout=8,
-        )
-        resposta.raise_for_status()
-        dados = resposta.json()
-        if dados:
-            return float(dados[0]["lat"]), float(dados[0]["lon"]), str(dados[0].get("display_name", ""))
-    except (requests.RequestException, ValueError, KeyError, TypeError):
-        pass
-    return None
 
-@st.cache_data(ttl=30 * 24 * 60 * 60, show_spinner=False)
-def obter_coordenadas_mapa():
-    """Resolve localidades uma vez e devolve coordenadas para os marcadores."""
-    pontos = {}
-    for i, mun in enumerate(MUNICIPIOS_CEARA):
-        # O Nominatim limita a frequência de consultas; aguarda entre pedidos.
-        if i > 0:
-            time.sleep(1.1)
-        resultado = geocodificar_local(mun["nome"])
-        if resultado:
-            lat_mapa, lon_mapa, nome_encontrado = resultado
-            pontos[mun["nome"]] = {
-                "map_lat": lat_mapa,
-                "map_lon": lon_mapa,
-                "geocodificado": True,
-                "local_encontrado": nome_encontrado,
-            }
-        else:
-            pontos[mun["nome"]] = {
-                "map_lat": mun["lat"],
-                "map_lon": mun["lon"],
-                "geocodificado": False,
-                "local_encontrado": "Coordenadas originais (fallback)",
-            }
-    return pontos
+# =========================================================
+# 4. CONSULTA DE PREVISÃO DO TEMPO E DO MAR
+# =========================================================
 
-with st.spinner("Localizando os municípios e localidades para posicionar os marcadores..."):
-    COORDENADAS_MAPA = obter_coordenadas_mapa()
-
-# ==========================================
-# 3. MOTOR DE DADOS E INTELIGÊNCIA
-# ==========================================
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800, show_spinner=False)
 def buscar_dados_por_data(lat, lon, data_desejada):
-    headers = {"User-Agent": "RadarPescaCearaSaaS/1.0"}
-    try:
-        url_w = (
-            "https://api.open-meteo.com/v1/forecast?"
-            f"latitude={lat}&longitude={lon}&hourly=wind_speed_10m"
-        )
-        resp_w = requests.get(url_w, headers=headers, timeout=8)
-        resp_w.raise_for_status()
-        dados_w = resp_w.json()
+    """
+    Consulta vento na API de previsão do tempo e ondas
+    na API marinha do Open-Meteo.
 
-        url_m = (
-            "https://marine-api.open-meteo.com/v1/marine?"
-            f"latitude={lat}&longitude={lon}"
-            "&hourly=wave_height,wave_period,ocean_current_velocity"
-        )
-        resp_m = requests.get(url_m, headers=headers, timeout=8)
-        resp_m.raise_for_status()
-        dados_m = resp_m.json()
+    Se a API não retornar dados, os valores ficam ausentes.
+    Não são criados valores meteorológicos fictícios.
+    """
 
-        tempos_w = dados_w.get("hourly", {}).get("time", [])
-        ventos = dados_w.get("hourly", {}).get("wind_speed_10m", [])
-        tempos_m = dados_m.get("hourly", {}).get("time", [])
-        ondas_alt = dados_m.get("hourly", {}).get("wave_height", [])
-        ondas_per = dados_m.get("hourly", {}).get("wave_period", [])
-        correntes = dados_m.get("hourly", {}).get("ocean_current_velocity", [])
-
-        v_dia = [v for t, v in zip(tempos_w, ventos) if t.startswith(data_desejada) and v is not None]
-        a_dia = [a for t, a in zip(tempos_m, ondas_alt) if t.startswith(data_desejada) and a is not None]
-        p_dia = [p for t, p in zip(tempos_m, ondas_per) if t.startswith(data_desejada) and p is not None]
-        c_dia = [c for t, c in zip(tempos_m, correntes) if t.startswith(data_desejada) and c is not None]
-
-        if v_dia and a_dia:
-            return {
-                "vento_vel": sum(v_dia) / len(v_dia),
-                "onda_alt": sum(a_dia) / len(a_dia),
-                "onda_per": sum(p_dia) / len(p_dia) if p_dia else 6.0,
-                "corrente": sum(c_dia) / len(c_dia) if c_dia else 0.3,
-                "dados_reais": True,
-            }
-    except (requests.RequestException, ValueError, TypeError, KeyError):
-        pass
-    return {
-        "vento_vel": 15.0,
-        "onda_alt": 1.0,
-        "onda_per": 6.0,
-        "corrente": 0.3,
+    resultado = {
+        "vento": None,
+        "ondas": None,
+        "periodo": None,
+        "corrente": None,
         "dados_reais": False,
+        "erro": None,
     }
 
+    data_texto = data_desejada.isoformat()
 
-def calcular_score_pesca(mun, data_desejada):
-    clima = buscar_dados_por_data(mun["lat"], mun["lon"], data_desejada)
-    score = mun["fator_base"]
+    try:
+        # VENTO
+        url_tempo = "https://api.open-meteo.com/v1/forecast"
 
-    alt = clima["onda_alt"]
-    if 0.6 <= alt <= 1.6:
-        score += 1.0
-    elif alt > 2.2:
-        score -= 2.5
-    elif alt < 0.4:
-        score -= 1.0
+        parametros_tempo = {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": "wind_speed_10m",
+            "start_date": data_texto,
+            "end_date": data_texto,
+            "timezone": "America/Fortaleza",
+        }
 
-    v_vel = clima["vento_vel"]
-    if 10 <= v_vel <= 25:
-        score += 0.5
-    elif v_vel > 35:
-        score -= 2.0
+        resposta_tempo = requests.get(
+            url_tempo,
+            params=parametros_tempo,
+            timeout=15,
+        )
+        resposta_tempo.raise_for_status()
+        dados_tempo = resposta_tempo.json()
 
-    if mun["proximo_foz_rio"]:
-        score += 1.5
-    if mun["tem_estrutura_pedra"]:
-        score += 1.0
+        vento_valores = (
+            dados_tempo.get("hourly", {}).get("wind_speed_10m", [])
+        )
 
-    score_final = round(max(0.0, min(10.0, score)), 1)
-    coordenadas_mapa = COORDENADAS_MAPA.get(mun["nome"], {})
+        vento_validos = [
+            valor for valor in vento_valores
+            if valor is not None
+        ]
 
-    return {
-        "Município": mun["nome"],
-        "latitude": mun["lat"],
-        "longitude": mun["lon"],
-        "map_lat": coordenadas_mapa.get("map_lat", mun["lat"]),
-        "map_lon": coordenadas_mapa.get("map_lon", mun["lon"]),
-        "geocodificado": coordenadas_mapa.get("geocodificado", False),
-        "local_encontrado": coordenadas_mapa.get("local_encontrado", "Coordenadas originais"),
-        "dados_reais": clima["dados_reais"],
-        "Score": score_final,
-        "Onda Média (m)": round(alt, 2),
-        "Período (s)": round(clima["onda_per"], 1),
-        "Vento Médio (km/h)": round(clima["vento_vel"], 1),
-        "Correnteza (m/s)": round(clima["corrente"], 2),
-        "Estrutura de Pedra": "Sim 🪨 (Abrigo natural)" if mun["tem_estrutura_pedra"] else "Praia limpa de areia 🏖️",
-        "Foz de Rio": "Próxima (Rica em nutrientes) 🌊" if mun["proximo_foz_rio"] else "Distante ❌",
-    }
+        if vento_validos:
+            resultado["vento"] = sum(vento_validos) / len(vento_validos)
 
-# ==========================================
-# 4. PAINEL DE CONTROLE LATERAL
-# ==========================================
-st.sidebar.header("Painel de Controle SaaS")
-data_selecionada = st.sidebar.date_input("Data da Pesca", datetime.now()).strftime("%Y-%m-%d")
-st.sidebar.info("ℹ️ O mapa e as previsões atualizam automaticamente ao alterar a data.")
-st.sidebar.caption("As posições do mapa são obtidas por geocodificação de localidades e precisam ser conferidas para uso como pesqueiros exatos.")
+        # ONDAS E CORRENTE MARINHA
+        url_mar = "https://marine-api.open-meteo.com/v1/marine"
 
-resultados = [calcular_score_pesca(mun, data_selecionada) for mun in MUNICIPIOS_CEARA]
-df = pd.DataFrame(resultados)
-df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
+        parametros_mar = {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": "wave_height,wave_period,ocean_current_velocity",
+            "start_date": data_texto,
+            "end_date": data_texto,
+            "timezone": "America/Fortaleza",
+        }
 
-# Aviso visível se algumas localidades não puderam ser geocodificadas.
-nao_localizados = df.loc[~df["geocodificado"], "Município"].tolist()
-if nao_localizados:
-    st.warning(
-        "Não foi possível geocodificar estas localidades; os marcadores usam as coordenadas antigas: "
-        + ", ".join(nao_localizados)
+        resposta_mar = requests.get(
+            url_mar,
+            params=parametros_mar,
+            timeout=15,
+        )
+        resposta_mar.raise_for_status()
+        dados_mar = resposta_mar.json()
+
+        horario_mar = dados_mar.get("hourly", {})
+
+        def media_valida(valores):
+            validos = [
+                valor for valor in valores
+                if valor is not None
+            ]
+
+            if not validos:
+                return None
+
+            return sum(validos) / len(validos)
+
+        resultado["ondas"] = media_valida(
+            horario_mar.get("wave_height", [])
+        )
+
+        resultado["periodo"] = media_valida(
+            horario_mar.get("wave_period", [])
+        )
+
+        resultado["corrente"] = media_valida(
+            horario_mar.get("ocean_current_velocity", [])
+        )
+
+        # Só considera que existem dados se pelo menos uma
+        # variável meteorológica ou marinha foi encontrada.
+        resultado["dados_reais"] = any(
+            resultado[chave] is not None
+            for chave in ("vento", "ondas", "periodo", "corrente")
+        )
+
+        if not resultado["dados_reais"]:
+            resultado["erro"] = (
+                "A API não retornou dados para essa data e posição."
+            )
+
+    except requests.RequestException as erro:
+        resultado["erro"] = f"Falha de conexão com a API: {erro}"
+
+    except (ValueError, TypeError, KeyError) as erro:
+        resultado["erro"] = f"Não foi possível interpretar os dados: {erro}"
+
+    return resultado
+
+
+# =========================================================
+# 5. CÁLCULO DO ÍNDICE INDICATIVO
+# =========================================================
+
+def calcular_pontuacao(local, dados):
+    """
+    Gera um índice indicativo para comparar locais.
+
+    Não é uma garantia de captura nem substitui a avaliação
+    das condições de segurança no mar.
+    """
+
+    if not dados["dados_reais"]:
+        return None
+
+    pontos = local["fator_base"]
+
+    vento = dados["vento"]
+    ondas = dados["ondas"]
+
+    if vento is not None:
+        if vento <= 10:
+            pontos += 3
+        elif vento <= 18:
+            pontos += 1
+        elif vento > 28:
+            pontos -= 4
+        elif vento > 20:
+            pontos -= 2
+
+    if ondas is not None:
+        if ondas <= 0.8:
+            pontos += 3
+        elif ondas <= 1.4:
+            pontos += 1
+        elif ondas > 2.5:
+            pontos -= 4
+        elif ondas > 1.8:
+            pontos -= 2
+
+    if local["desembocadura"]:
+        pontos += 1
+
+    if "pedras" in local["estrutura"].lower():
+        pontos += 1
+
+    return max(0, min(100, pontos * 3))
+
+
+# =========================================================
+# 6. CABEÇALHO
+# =========================================================
+
+st.title("🎣 Radar de Pesca Ceará")
+st.caption(
+    "Mapa costeiro com condições meteorológicas e marinhas "
+    "para apoiar a escolha de locais de pesca."
+)
+
+st.warning(
+    "As posições dos marcadores são aproximadas. "
+    "Confira cada ponto no mapa antes de utilizá-lo. "
+    "O índice é apenas indicativo e não representa uma "
+    "previsão garantida de captura ou de segurança."
+)
+
+
+# =========================================================
+# 7. FILTROS
+# =========================================================
+
+col_data, col_local = st.columns([1, 2])
+
+with col_data:
+    data_escolhida = st.date_input(
+        "Data da consulta",
+        value=date.today(),
+        help="Selecione a data para consultar os dados disponíveis.",
     )
 
-# ==========================================
-# 5. RENDERIZAÇÃO DA PÁGINA
-# ==========================================
-st.subheader(f"🏆 Top 3 Melhores Destinos para {data_selecionada}")
-top_3 = df.head(3)
-cols = st.columns(3)
-for idx, (_, row) in enumerate(top_3.iterrows()):
-    with cols[idx]:
-        st.metric(
-            label=f"#{idx + 1} - {row['Município']}",
-            value=f"Score: {row['Score']}",
-            delta=f"Onda: {row['Onda Média (m)']}m",
+with col_local:
+    nomes_locais = ["Todos os locais"] + [
+        local["nome"] for local in LOCAIS_PESCA
+    ]
+
+    local_selecionado = st.selectbox(
+        "Filtrar local",
+        nomes_locais,
+    )
+
+
+if local_selecionado == "Todos os locais":
+    locais_exibidos = LOCAIS_PESCA
+else:
+    locais_exibidos = [
+        local for local in LOCAIS_PESCA
+        if local["nome"] == local_selecionado
+    ]
+
+
+# =========================================================
+# 8. CONSULTA DOS DADOS
+# =========================================================
+
+resultados = []
+
+with st.spinner("Consultando as condições do tempo e do mar..."):
+    for local in locais_exibidos:
+        dados = buscar_dados_por_data(
+            local["lat_api"],
+            local["lon_api"],
+            data_escolhida,
         )
 
-st.markdown("---")
-st.subheader("🗺️ Mapa Interativo de Inteligência Costeira")
-st.markdown(
-    "Clique em qualquer marcador para inspecionar as condições estimadas de "
-    "ondas, ventos, correnteza e características do local. Confira a posição "
-    "geocodificada antes de usar o marcador como ponto exato de pesca."
+        pontuacao = calcular_pontuacao(local, dados)
+
+        resultados.append({
+            "Local": local["nome"],
+            "Índice indicativo": (
+                round(pontuacao, 1)
+                if pontuacao is not None
+                else None
+            ),
+            "Vento (km/h)": (
+                round(dados["vento"], 1)
+                if dados["vento"] is not None
+                else None
+            ),
+            "Ondas (m)": (
+                round(dados["ondas"], 2)
+                if dados["ondas"] is not None
+                else None
+            ),
+            "Período das ondas (s)": (
+                round(dados["periodo"], 1)
+                if dados["periodo"] is not None
+                else None
+            ),
+            "Corrente (m/s)": (
+                round(dados["corrente"], 2)
+                if dados["corrente"] is not None
+                else None
+            ),
+            "Estrutura costeira": local["estrutura"],
+            "Desembocadura próxima": (
+                "Sim" if local["desembocadura"] else "Não"
+            ),
+            "Dados disponíveis": (
+                "Sim" if dados["dados_reais"] else "Não"
+            ),
+            "Erro da consulta": dados["erro"],
+            "lat_mapa": local["lat_mapa"],
+            "lon_mapa": local["lon_mapa"],
+        })
+
+
+tabela = pd.DataFrame(resultados)
+
+if not tabela.empty:
+    tabela = tabela.sort_values(
+        by="Índice indicativo",
+        ascending=False,
+        na_position="last",
+    ).reset_index(drop=True)
+
+
+# =========================================================
+# 9. INDICADORES
+# =========================================================
+
+total_locais = len(tabela)
+
+locais_com_dados = (
+    int((tabela["Dados disponíveis"] == "Sim").sum())
+    if total_locais
+    else 0
 )
 
-mapa_saas = folium.Map(
-    location=[-3.85, -39.50],
-    zoom_start=7,
-    tiles="OpenStreetMap",
-    control_scale=True,
+tabela_com_pontuacao = tabela.dropna(
+    subset=["Índice indicativo"]
 )
 
-primeiro_lugar = df.iloc[0]["Município"] if len(df) > 0 else ""
-segundo_lugar = df.iloc[1]["Município"] if len(df) > 1 else ""
-terceiro_lugar = df.iloc[2]["Município"] if len(df) > 2 else ""
+if not tabela_com_pontuacao.empty:
+    melhor_local = tabela_com_pontuacao.iloc[0]
+    nome_melhor = melhor_local["Local"]
+    pontuacao_melhor = melhor_local["Índice indicativo"]
+else:
+    nome_melhor = "Sem dados disponíveis"
+    pontuacao_melhor = "—"
 
-for _, row in df.iterrows():
-    mun_nome = row["Município"]
-    score = row["Score"]
 
-    if mun_nome == primeiro_lugar:
-        cor_marcador = "#FFD700"
-        posicao_txt = "🥇 1º Lugar"
-    elif mun_nome == segundo_lugar:
-        cor_marcador = "#C0C0C0"
-        posicao_txt = "🥈 2º Lugar"
-    elif mun_nome == terceiro_lugar:
-        cor_marcador = "#CD7F32"
-        posicao_txt = "🥉 3º Lugar"
-    elif score >= 10.0:
-        cor_marcador = "#28a745"
-        posicao_txt = f"⭐ Nota Máxima ({score})"
-    else:
-        cor_marcador = "#dc3545"
-        posicao_txt = f"⚠️ Score: {score}"
+metrica1, metrica2, metrica3 = st.columns(3)
 
-    estado_localizacao = "Localização obtida no OpenStreetMap" if row["geocodificado"] else "Localização antiga (não geocodificada)"
-    estado_dados = "API consultada" if row["dados_reais"] else "valores de contingência (API indisponível)"
-    popup_saas_html = f"""
-    <div style="font-family: 'Segoe UI', sans-serif; width: 250px; padding: 5px; color: #0F172A;">
-        <h4 style="color: #0F172A; margin-bottom: 5px; border-bottom: 2px solid #00E5FF; padding-bottom: 3px;">{mun_nome}</h4>
-        <p style="margin: 3px 0; font-size: 13px;"><b>🏅 Posição:</b> {posicao_txt}</p>
-        <p style="margin: 3px 0; font-size: 11px;"><b>📍 Geolocalização:</b> {estado_localizacao}</p>
-        <p style="margin: 3px 0; font-size: 11px;"><b>🌐 Dados:</b> {estado_dados}</p>
-        <hr style="margin: 4px 0; border: 0; border-top: 1px solid #CBD5E1;">
-        <p style="margin: 3px 0; font-size: 13px;"><b>🌊 Altura de Onda:</b> {row['Onda Média (m)']} m</p>
-        <p style="margin: 3px 0; font-size: 13px;"><b>⏱️ Período de Onda:</b> {row['Período (s)']} s</p>
-        <p style="margin: 3px 0; font-size: 13px;"><b>💨 Vento Médio:</b> {row['Vento Médio (km/h)']} km/h</p>
-        <p style="margin: 3px 0; font-size: 13px;"><b>🌀 Correnteza Marinha:</b> {row['Correnteza (m/s)']} m/s</p>
-        <hr style="margin: 4px 0; border: 0; border-top: 1px solid #CBD5E1;">
-        <p style="margin: 3px 0; font-size: 12px;"><b>🪨 Relevo:</b> {row['Estrutura de Pedra']}</p>
-        <p style="margin: 3px 0; font-size: 12px;"><b>🌊 Foz/Estuário:</b> {row['Foz de Rio']}</p>
-    </div>
-    """
+with metrica1:
+    st.metric("Locais no mapa", total_locais)
 
-    # CORREÇÃO PRINCIPAL: usa as coordenadas de mapa, não as coordenadas
-    # de consulta da previsão. A ordem do Folium é [latitude, longitude].
-    folium.CircleMarker(
-        location=[float(row["map_lat"]), float(row["map_lon"])],
-        radius=9,
-        popup=folium.Popup(popup_saas_html, max_width=280),
-        tooltip=f"📍 {mun_nome} | {posicao_txt}",
-        color=cor_marcador,
-        fill=True,
-        fill_color=cor_marcador,
-        fill_opacity=0.95,
-        weight=2,
-    ).add_to(mapa_saas)
+with metrica2:
+    st.metric("Locais com dados", locais_com_dados)
 
-st_folium(mapa_saas, width=1200, height=520, returned_objects=[])
+with metrica3:
+    st.metric("Maior índice indicativo", pontuacao_melhor)
 
-st.markdown(
-    """
-    <div class="saas-card">
-        <h4>💡 Relatório Técnico do Litoral Cearense</h4>
-        <p>O sistema combina características cadastradas dos locais com dados meteorológicos e marinhos quando disponíveis. A posição do marcador é obtida por geocodificação de localidades do OpenStreetMap; isso não garante que seja o ponto exato da praia ou do pesqueiro. Confira os locais antes de tomar decisões de pesca.</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
+st.caption(f"Local com maior índice: {nome_melhor}")
+
+
+# =========================================================
+# 10. MAPA
+# =========================================================
+
+if locais_exibidos:
+    centro_lat = sum(
+        local["lat_mapa"] for local in locais_exibidos
+    ) / len(locais_exibidos)
+
+    centro_lon = sum(
+        local["lon_mapa"] for local in locais_exibidos
+    ) / len(locais_exibidos)
+
+    mapa = folium.Map(
+        location=[centro_lat, centro_lon],
+        zoom_start=8 if len(locais_exibidos) > 1 else 12,
+        tiles="OpenStreetMap",
+        control_scale=True,
+    )
+
+    for _, linha in tabela.iterrows():
+        pontuacao = linha["Índice indicativo"]
+
+        if pd.isna(pontuacao):
+            cor = "gray"
+            texto_indice = "Sem dados suficientes"
+        elif pontuacao >= 30:
+            cor = "green"
+            texto_indice = f"Índice: {pontuacao:.1f}"
+        elif pontuacao >= 20:
+            cor = "orange"
+            texto_indice = f"Índice: {pontuacao:.1f}"
+        else:
+            cor = "red"
+            texto_indice = f"Índice: {pontuacao:.1f}"
+
+        popup_html = f"""
+        <div style="width:230px">
+            <b>{linha['Local']}</b><br>
+            {texto_indice}<br>
+            Vento: {linha['Vento (km/h)']} km/h<br>
+            Ondas: {linha['Ondas (m)']} m<br>
+            Período: {linha['Período das ondas (s)']} s<br>
+            Corrente: {linha['Corrente (m/s)']} m/s<br>
+            Dados disponíveis: {linha['Dados disponíveis']}
+        </div>
+        """
+
+        folium.Marker(
+            location=[
+                linha["lat_mapa"],
+                linha["lon_mapa"],
+            ],
+            tooltip=linha["Local"],
+            popup=folium.Popup(popup_html, max_width=300),
+            icon=folium.Icon(
+                color=cor,
+                icon="info-sign",
+            ),
+        ).add_to(mapa)
+
+    st.subheader("📍 Mapa dos pontos costeiros")
+    st_folium(
+        mapa,
+        use_container_width=True,
+        height=600,
+        returned_objects=[],
+    )
+
+
+# =========================================================
+# 11. TABELA DE CONDIÇÕES
+# =========================================================
+
+st.subheader("📊 Condições por local")
+
+colunas_visiveis = [
+    "Local",
+    "Índice indicativo",
+    "Vento (km/h)",
+    "Ondas (m)",
+    "Período das ondas (s)",
+    "Corrente (m/s)",
+    "Estrutura costeira",
+    "Desembocadura próxima",
+    "Dados disponíveis",
+]
+
+st.dataframe(
+    tabela[colunas_visiveis],
+    use_container_width=True,
+    hide_index=True,
 )
 
-st.subheader("📋 Tabela Analítica Consolidada")
-colunas_ocultas = ["latitude", "longitude", "map_lat", "map_lon", "geocodificado", "local_encontrado", "dados_reais"]
-df_exibicao = df.drop(columns=colunas_ocultas, errors="ignore").copy()
-df_exibicao.insert(0, "Posição", range(1, len(df_exibicao) + 1))
-st.dataframe(df_exibicao, width="stretch", hide_index=True)
 
-with st.expander("🔎 Conferir coordenadas usadas no mapa"):
-    st.caption("Confira se cada ponto está na praia/localidade pretendida. A geocodificação de um nome de município pode retornar o centro da localidade, não a faixa de areia.")
-    conferencias = df[["Município", "map_lat", "map_lon", "geocodificado", "local_encontrado"]].copy()
-    conferencias = conferencias.rename(columns={
-        "map_lat": "Latitude do mapa",
-        "map_lon": "Longitude do mapa",
-        "geocodificado": "Encontrado no OSM",
-        "local_encontrado": "Resultado da busca",
-    })
-    st.dataframe(conferencias, width="stretch", hide_index=True)
+# =========================================================
+# 12. DIAGNÓSTICO DOS DADOS
+# =========================================================
+
+with st.expander("🔎 Ver detalhes e problemas nas consultas"):
+    st.write(
+        "Esta seção mostra os dados recebidos das APIs. "
+        "Campos vazios indicam que a variável não foi retornada."
+    )
+
+    for _, linha in tabela.iterrows():
+        with st.container():
+            st.markdown(f"**{linha['Local']}**")
+
+            if linha["Erro da consulta"]:
+                st.warning(linha["Erro da consulta"])
+            elif linha["Dados disponíveis"] == "Não":
+                st.info("Não há dados suficientes para calcular o índice.")
+            else:
+                st.success("Consulta retornou dados.")
+
+            st.caption(
+                f"Marcador: "
+                f"{linha['lat_mapa']:.5f}, "
+                f"{linha['lon_mapa']:.5f}"
+            )
+
+
+# =========================================================
+# 13. AVISO FINAL
+# =========================================================
+
+st.divider()
+
+st.caption(
+    "Fonte meteorológica: Open-Meteo. "
+    "A disponibilidade depende da data, da região e das APIs. "
+    "Confirme as condições locais, a previsão oficial e a "
+    "segurança da navegação antes de sair para pescar."
+)
